@@ -1,1 +1,4 @@
 lab3/archive/
+
+# EWS: datasets, checkpoints, caches (large / local)
+EWS/data/
