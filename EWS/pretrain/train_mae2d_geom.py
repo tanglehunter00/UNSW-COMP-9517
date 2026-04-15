@@ -34,9 +34,13 @@ def resolve_device(device_str: str) -> torch.device:
                 f"device={device_str!r} requested but CUDA is not available.\n{_CUDA_INSTALL_HINT}"
             )
         return dev
-    if not torch.cuda.is_available():
-        raise RuntimeError(_CUDA_INSTALL_HINT)
-    return torch.device("cuda")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    print(
+        "Warning: CUDA 不可用，使用 CPU 训练（很慢）。"
+        " 若要 GPU，请安装 CUDA 版 PyTorch；或显式传入 device='cpu' 以消除本提示。"
+    )
+    return torch.device("cpu")
 
 
 def train_one_epoch(
@@ -88,7 +92,7 @@ def parse_args():
     p.add_argument("--batch_size", type=int, default=8)
     p.add_argument("--lr", type=float, default=1.5e-4)
     p.add_argument("--weight_decay", type=float, default=0.05)
-    p.add_argument("--mask_ratio", type=float, default=0.75)
+    p.add_argument("--mask_ratio", type=float, default=0.5)
     p.add_argument("--num_workers", type=int, default=0)
     p.add_argument("--val_every", type=int, default=500)
     p.add_argument(
@@ -100,7 +104,7 @@ def parse_args():
         "--device",
         type=str,
         default="",
-        help="Default: require CUDA; pass cpu for CPU (debug)",
+        help="Empty: CUDA if available else CPU. Pass cpu to force CPU; cuda:0 to force GPU.",
     )
     return p.parse_args()
 
@@ -115,7 +119,7 @@ def run_training(
     batch_size: int = 8,
     lr: float = 1.5e-4,
     weight_decay: float = 0.05,
-    mask_ratio: float = 0.75,
+    mask_ratio: float = 0.5,
     num_workers: int = 0,
     val_every: int = 500,
     device: str = "",

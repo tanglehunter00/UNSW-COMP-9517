@@ -89,7 +89,7 @@ def parse_args():
     p.add_argument("--batch_size", type=int, default=8)
     p.add_argument("--lr", type=float, default=1.5e-4)
     p.add_argument("--weight_decay", type=float, default=0.05)
-    p.add_argument("--mask_ratio", type=float, default=0.75)
+    p.add_argument("--mask_ratio", type=float, default=0.5)
     p.add_argument("--num_workers", type=int, default=0)
     p.add_argument("--val_every", type=int, default=500)
     p.add_argument(
@@ -111,7 +111,7 @@ def run_training(
     batch_size: int = 8,
     lr: float = 1.5e-4,
     weight_decay: float = 0.05,
-    mask_ratio: float = 0.75,
+    mask_ratio: float = 0.5,
     num_workers: int = 0,
     val_every: int = 500,
     device: str = "",

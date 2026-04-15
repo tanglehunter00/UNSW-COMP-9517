@@ -143,7 +143,7 @@ class MaskedAutoencoder2D(nn.Module):
         loss = (loss * mask).sum() / (mask.sum() + 1e-8)
         return loss
 
-    def forward(self, imgs: torch.Tensor, mask_ratio: float = 0.75):
+    def forward(self, imgs: torch.Tensor, mask_ratio: float = 0.5):
         latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio)
         pred = self.forward_decoder(latent, ids_restore)
         loss = self.forward_loss(imgs, pred, mask)
