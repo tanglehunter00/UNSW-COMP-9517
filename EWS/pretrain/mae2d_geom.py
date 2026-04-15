@@ -6,7 +6,7 @@ from mae2d import _trunc_normal_
 
 class MaskedAutoencoder2DGeom(nn.Module):
 
-    def __init__(self, img_size: int=350, patch_size: int=25, in_chans: int=3, embed_dim: int=384, depth: int=6, num_heads: int=6, decoder_embed_dim: int=256, decoder_depth: int=4, decoder_num_heads: int=8, mlp_ratio: float=4.0, *, grid_t: int=1, use_geom_bias: bool=True, dropout: float=0.1):
+    def __init__(self, img_size: int=350, patch_size: int=5, in_chans: int=3, embed_dim: int=384, depth: int=6, num_heads: int=6, decoder_embed_dim: int=256, decoder_depth: int=4, decoder_num_heads: int=8, mlp_ratio: float=4.0, *, grid_t: int=1, use_geom_bias: bool=True, dropout: float=0.1):
         super().__init__()
         if img_size % patch_size != 0:
             raise ValueError(f'img_size {img_size} must be divisible by patch_size {patch_size}')
