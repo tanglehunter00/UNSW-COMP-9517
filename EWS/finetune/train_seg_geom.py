@@ -27,6 +27,21 @@ def pixel_accuracy(prob: torch.Tensor, target: torch.Tensor, thr: float=0.5) -> 
     pred = (prob >= thr).to(target.dtype)
     return (pred == target).float().mean()
 
+def _prf1_iou_from_counts(tp: float, fp: float, fn: float) -> tuple[float, float, float, float]:
+    denom_p = tp + fp
+    denom_r = tp + fn
+    denom_iou = tp + fp + fn
+    precision = tp / denom_p if denom_p > 0 else float('nan')
+    recall = tp / denom_r if denom_r > 0 else float('nan')
+    if math.isnan(precision) or math.isnan(recall):
+        f1 = float('nan')
+    elif precision == 0.0 and recall == 0.0:
+        f1 = 0.0
+    else:
+        f1 = 2.0 * precision * recall / (precision + recall)
+    iou = tp / denom_iou if denom_iou > 0 else float('nan')
+    return (precision, recall, f1, iou)
+
 def _binary_roc_auc_numpy(y_true: np.ndarray, y_score: np.ndarray) -> float:
     y = y_true.astype(np.int64).ravel()
     s = y_score.astype(np.float64).ravel()
@@ -62,28 +77,32 @@ def reset_segmentation_train_log_csv(path: Path | None=None) -> Path:
     path = path or SEGMENTATION_TRAIN_LOG_CSV
     with open(path, 'w', newline='', encoding='utf-8') as f:
         w = csv.writer(f)
-        w.writerow(['epoch', 'train_loss', 'val_loss', 'val_dice', 'val_acc', 'val_auc', 'test_loss', 'test_dice', 'test_acc', 'test_auc'])
+        w.writerow(['epoch', 'train_loss', 'val_loss', 'val_dice', 'val_acc', 'val_auc', 'val_precision', 'val_recall', 'val_f1', 'val_iou', 'test_loss', 'test_dice', 'test_acc', 'test_auc', 'test_precision', 'test_recall', 'test_f1', 'test_iou'])
     return path
 
-def append_segmentation_train_log_epoch(path: Path, epoch: int, train_loss: float, val_loss: float, val_dice: float, val_acc: float, val_auc: float) -> None:
+def append_segmentation_train_log_epoch(path: Path, epoch: int, train_loss: float, val_loss: float, val_dice: float, val_acc: float, val_auc: float, val_precision: float, val_recall: float, val_f1: float, val_iou: float) -> None:
     with open(path, 'a', newline='', encoding='utf-8') as f:
         w = csv.writer(f)
-        w.writerow([str(epoch), _csv_float_cell(train_loss), _csv_float_cell(val_loss), _csv_float_cell(val_dice), _csv_float_cell(val_acc), _csv_float_cell(val_auc), '', '', '', ''])
+        w.writerow([str(epoch), _csv_float_cell(train_loss), _csv_float_cell(val_loss), _csv_float_cell(val_dice), _csv_float_cell(val_acc), _csv_float_cell(val_auc), _csv_float_cell(val_precision), _csv_float_cell(val_recall), _csv_float_cell(val_f1), _csv_float_cell(val_iou), '', '', '', '', '', '', '', ''])
 
-def append_segmentation_train_log_test(path: Path, test_loss: float, test_dice: float, test_acc: float, test_auc: float) -> None:
+def append_segmentation_train_log_test(path: Path, test_loss: float, test_dice: float, test_acc: float, test_auc: float, test_precision: float, test_recall: float, test_f1: float, test_iou: float) -> None:
     with open(path, 'a', newline='', encoding='utf-8') as f:
         w = csv.writer(f)
-        w.writerow(['test', '', '', '', '', '', _csv_float_cell(test_loss), _csv_float_cell(test_dice), _csv_float_cell(test_acc), _csv_float_cell(test_auc)])
+        w.writerow(['test', '', '', '', '', '', '', '', '', '', _csv_float_cell(test_loss), _csv_float_cell(test_dice), _csv_float_cell(test_acc), _csv_float_cell(test_auc), _csv_float_cell(test_precision), _csv_float_cell(test_recall), _csv_float_cell(test_f1), _csv_float_cell(test_iou)])
 
 @torch.no_grad()
-def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device) -> tuple[float, float, float, float]:
+def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device) -> tuple[float, float, float, float, float, float, float, float]:
     model.eval()
     loss_acc = 0.0
     dice_acc = 0.0
     acc_acc = 0.0
     n = 0
+    tp_acc = 0.0
+    fp_acc = 0.0
+    fn_acc = 0.0
     ys: list[torch.Tensor] = []
     ps: list[torch.Tensor] = []
+    thr = 0.5
     for x, y in loader:
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
@@ -94,12 +113,17 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device) -
         dice_acc += dice_coeff(prob, y).item() * x.size(0)
         acc_acc += pixel_accuracy(prob, y).item() * x.size(0)
         n += x.size(0)
+        pred = (prob >= thr).to(y.dtype)
+        tp_acc += float((pred * y).sum().item())
+        fp_acc += float((pred * (1.0 - y)).sum().item())
+        fn_acc += float(((1.0 - pred) * y).sum().item())
         ys.append(y.reshape(-1))
         ps.append(prob.reshape(-1))
     y_cat = torch.cat(ys, dim=0)
     p_cat = torch.cat(ps, dim=0)
     auc = roc_auc_pixels_flat(p_cat, y_cat)
-    return (loss_acc / max(n, 1), dice_acc / max(n, 1), acc_acc / max(n, 1), auc)
+    pr, rc, f1, iou = _prf1_iou_from_counts(tp_acc, fp_acc, fn_acc)
+    return (loss_acc / max(n, 1), dice_acc / max(n, 1), acc_acc / max(n, 1), auc, pr, rc, f1, iou)
 
 def train_epoch(model: torch.nn.Module, loader: DataLoader, opt: torch.optim.Optimizer, device: torch.device, scaler: torch.cuda.amp.GradScaler | None) -> float:
     model.train()
@@ -166,20 +190,20 @@ def main():
     best_path = out_dir / 'unet_mae_geom_best.pt'
     for epoch in range(1, args.epochs + 1):
         tr_loss = train_epoch(model, loader_tr, opt, device, scaler)
-        va_loss, va_dice, va_acc, va_auc = evaluate(model, loader_va, device)
-        append_segmentation_train_log_epoch(log_csv, epoch, tr_loss, va_loss, va_dice, va_acc, va_auc)
-        print(f'epoch {epoch}/{args.epochs}  train_loss={tr_loss:.4f}  val_loss={va_loss:.4f}  val_dice={va_dice:.4f}  val_acc={va_acc:.4f}  val_auc={va_auc:.4f}')
-        torch.save({'model': model.state_dict(), 'epoch': epoch, 'args': vars(args), 'val_dice': va_dice, 'val_acc': va_acc, 'val_auc': va_auc, 'backend': 'geom_mae'}, out_dir / f'unet_mae_geom_epoch{epoch}.pt')
+        va_loss, va_dice, va_acc, va_auc, va_pr, va_rc, va_f1, va_iou = evaluate(model, loader_va, device)
+        append_segmentation_train_log_epoch(log_csv, epoch, tr_loss, va_loss, va_dice, va_acc, va_auc, va_pr, va_rc, va_f1, va_iou)
+        print(f'epoch {epoch}/{args.epochs}  train_loss={tr_loss:.4f}  val_loss={va_loss:.4f}  val_dice={va_dice:.4f}  val_acc={va_acc:.4f}  val_auc={va_auc:.4f}  val_precision={va_pr:.4f}  val_recall={va_rc:.4f}  val_f1={va_f1:.4f}  val_iou={va_iou:.4f}')
+        torch.save({'model': model.state_dict(), 'epoch': epoch, 'args': vars(args), 'val_dice': va_dice, 'val_acc': va_acc, 'val_auc': va_auc, 'val_precision': va_pr, 'val_recall': va_rc, 'val_f1': va_f1, 'val_iou': va_iou, 'backend': 'geom_mae'}, out_dir / f'unet_mae_geom_epoch{epoch}.pt')
         if va_dice > best_dice:
             best_dice = va_dice
-            torch.save({'model': model.state_dict(), 'epoch': epoch, 'args': vars(args), 'val_dice': va_dice, 'val_acc': va_acc, 'val_auc': va_auc, 'backend': 'geom_mae'}, best_path)
+            torch.save({'model': model.state_dict(), 'epoch': epoch, 'args': vars(args), 'val_dice': va_dice, 'val_acc': va_acc, 'val_auc': va_auc, 'val_precision': va_pr, 'val_recall': va_rc, 'val_f1': va_f1, 'val_iou': va_iou, 'backend': 'geom_mae'}, best_path)
     print('Evaluating best val checkpoint on test (test used only here)...')
     ckpt = torch.load(best_path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt['model'])
-    te_loss, te_dice, te_acc, te_auc = evaluate(model, loader_te, device)
-    append_segmentation_train_log_test(log_csv, te_loss, te_dice, te_acc, te_auc)
-    print(f'test_loss={te_loss:.4f}  test_dice={te_dice:.4f}  test_acc={te_acc:.4f}  test_auc={te_auc:.4f}')
+    te_loss, te_dice, te_acc, te_auc, te_pr, te_rc, te_f1, te_iou = evaluate(model, loader_te, device)
+    append_segmentation_train_log_test(log_csv, te_loss, te_dice, te_acc, te_auc, te_pr, te_rc, te_f1, te_iou)
+    print(f'test_loss={te_loss:.4f}  test_dice={te_dice:.4f}  test_acc={te_acc:.4f}  test_auc={te_auc:.4f}  test_precision={te_pr:.4f}  test_recall={te_rc:.4f}  test_f1={te_f1:.4f}  test_iou={te_iou:.4f}')
     with open(out_dir / 'test_metrics_geom.txt', 'w', encoding='utf-8') as f:
-        f.write(f'test_loss={te_loss}\ntest_dice={te_dice}\ntest_acc={te_acc}\ntest_auc={te_auc}\n')
+        f.write(f'test_loss={te_loss}\ntest_dice={te_dice}\ntest_acc={te_acc}\ntest_auc={te_auc}\ntest_precision={te_pr}\ntest_recall={te_rc}\ntest_f1={te_f1}\ntest_iou={te_iou}\n')
 if __name__ == '__main__':
     main()
